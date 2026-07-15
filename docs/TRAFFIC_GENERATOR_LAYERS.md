@@ -537,3 +537,211 @@ src/components/experiments/TrafficGeneratorPanel.tsx
 src/pages/ExperimentsPage.tsx
 ```
 
+---
+
+## Capas 4–6 — Integración implementada en el dashboard
+
+Las capas 4–6 ya están implementadas en el proyecto. Estas capas se pueden compilar y revisar en Windows, pero las peticiones HTTP reales solo funcionarán cuando el navegador tenga una ruta de red hacia los agentes.
+
+### Capa 4 — Servicio TypeScript
+
+Archivo:
+
+```text
+src/services/rpiAgent.ts
+```
+
+Responsabilidades:
+
+- Normalizar una IP, hostname o URL completa del agente.
+- Consultar `GET /health`.
+- Enviar `POST /start`.
+- Consultar `GET /result`.
+- Enviar `POST /stop`.
+- Aplicar un timeout de ocho segundos.
+- Convertir errores HTTP, CORS y de conectividad en mensajes comprensibles.
+
+Ejemplos de direcciones válidas:
+
+```text
+10.0.0.1
+mininet-host.local
+http://10.0.0.1:5000
+```
+
+Si no se especifica protocolo ni puerto, el servicio utiliza:
+
+```text
+http://<dirección>:5000
+```
+
+#### Verificación de la capa 4
+
+1. Abrir **Experiments**.
+2. Seleccionar el host origen. El panel utilizará automáticamente la IP descubierta por ONOS.
+3. Pulsar **Test agent**.
+4. Si el agente está en otra red de gestión, abrir **Settings**.
+5. Buscar **Traffic Generator Agent Overrides**.
+6. Configurar únicamente la dirección alternativa del agente y repetir la prueba.
+
+Resultado esperado cuando existe conectividad:
+
+```text
+Agent reachable (...); idle.
+```
+
+En Windows, mientras Mininet esté aislado en Linux, es esperable obtener:
+
+```text
+Cannot reach agent 10.0.0.1. Check its IP, port, CORS and network routing.
+```
+
+Ese mensaje confirma que la interfaz y el servicio intentaron realizar la petición; no confirma que exista ruta hasta la red Mininet.
+
+### Capa 5 — Estado Zustand
+
+Archivo:
+
+```text
+src/stores/trafficStore.ts
+```
+
+El store mantiene:
+
+```text
+status         estado global del trabajo
+activeJob      origen, destino, parámetros y dirección del agente
+latestResult   último estado o resultado recibido
+history        últimos 50 experimentos
+error          último error visible
+isPolling      evita peticiones /result simultáneas
+```
+
+Estados posibles:
+
+```text
+idle
+starting
+running
+stopping
+completed
+stopped
+failed
+```
+
+Flujo de un experimento:
+
+```text
+Start
+  → status = starting
+  → POST /start
+  → status = running
+  → GET /result cada 2 segundos
+  → completed o failed
+  → guardar en history
+```
+
+Flujo de parada:
+
+```text
+Stop
+  → status = stopping
+  → POST /stop
+  → status = stopped
+  → guardar en history
+```
+
+#### Verificación de la capa 5
+
+- [ ] Al pulsar Start aparece `starting`.
+- [ ] Después de responder `/start` aparece `running`.
+- [ ] La barra de progreso utiliza `elapsed_sec` recibido del agente.
+- [ ] Al finalizar aparece `completed`.
+- [ ] El resultado aparece en **Recent runs**.
+- [ ] Al pulsar Stop aparece `stopping` y después `stopped`.
+- [ ] Un fallo de conexión aparece como `failed` y se guarda en el historial.
+- [ ] El botón **Clear** elimina el historial visible.
+
+El historial se mantiene mientras la página está abierta. No se persiste en `localStorage`, para evitar conservar resultados de laboratorio obsoletos entre sesiones.
+
+### Capa 6 — Interfaz React
+
+Archivos:
+
+```text
+src/components/experiments/TrafficGeneratorPanel.tsx
+src/pages/ExperimentsPage.tsx
+src/pages/SettingsPage.tsx
+src/stores/settingsStore.ts
+```
+
+La interfaz permite:
+
+- Seleccionar un host origen que tenga agente configurado.
+- Seleccionar un host destino diferente y con dirección IP.
+- Elegir ICMP Ping, TCP Bulk o UDP Constant.
+- Configurar puerto, bandwidth, duración y streams.
+- Comprobar `/health` con **Test agent**.
+- Iniciar y detener el tráfico.
+- Consultar el progreso cada dos segundos.
+- Mostrar throughput, RTT, jitter y pérdida.
+- Mostrar los últimos cinco resultados y conservar hasta 50 en memoria.
+
+La dirección del agente se resuelve con esta prioridad:
+
+```text
+1. Override opcional guardado en Settings
+2. host.ipAddress descubierto por ONOS y almacenado en networkStore
+```
+
+Por tanto, Mininet no necesita una tabla hardcodeada. Si ONOS descubre `h-1` con IP `10.0.0.1`, el dashboard intenta automáticamente `http://10.0.0.1:5000`.
+
+Los overrides opcionales sí se guardan en `localStorage` mediante el middleware `persist` de Zustand. Se utilizan únicamente cuando el agente escucha en una dirección de gestión distinta de la IP de tráfico.
+
+Cuando ONOS descubra hardware real, los IDs pueden ser direcciones MAC como:
+
+```text
+00:00:00:00:00:01/None
+```
+
+Si el agente es accesible mediante la IP descubierta, no es necesario configurar nada. Si utiliza otra interfaz, abrir Settings y asignar la IP de gestión al nuevo ID como override.
+
+#### Verificación de la capa 6
+
+- [ ] La página Experiments muestra **Traffic Generator**.
+- [ ] El origen ofrece hosts online con una IP descubierta.
+- [ ] Sin override, **Test agent** utiliza automáticamente `host.ipAddress`.
+- [ ] Con override, **Test agent** utiliza la dirección configurada en Settings.
+- [ ] El destino no permite seleccionar el mismo host que el origen.
+- [ ] Ping desactiva puerto, bandwidth y streams.
+- [ ] TCP activa puerto y streams.
+- [ ] UDP activa puerto, bandwidth y streams.
+- [ ] Start queda desactivado si falta origen o destino.
+- [ ] Durante un trabajo los campos quedan bloqueados.
+- [ ] Los errores de red son visibles y no bloquean la página.
+- [ ] Los resultados finales se muestran sin recargar la página.
+
+### Comprobación TypeScript
+
+Desde `sdn-dashboard`:
+
+```bash
+npm run type-check
+```
+
+El comando debe terminar sin errores.
+
+### Prueba completa en Linux o hardware
+
+Después de validar individualmente las capas 1–3:
+
+1. Confirmar que el dashboard puede alcanzar `http://<agente>:5000/health`.
+2. Abrir Settings y guardar el agente del host origen.
+3. Abrir Experiments y pulsar **Test agent**.
+4. Probar primero ICMP durante tres segundos.
+5. Comprobar el resultado de RTT y pérdida.
+6. Iniciar `iperf3 -s -D -p 5201` en el destino.
+7. Probar TCP durante cinco segundos.
+8. Probar UDP a 10 Mbps durante cinco segundos.
+9. Comprobar throughput, jitter y pérdida.
+10. Iniciar una prueba larga y verificar el botón Stop.

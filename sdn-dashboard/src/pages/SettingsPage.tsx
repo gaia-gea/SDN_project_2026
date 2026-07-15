@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Save, RefreshCw, Wifi, BarChart2, Database } from 'lucide-react'
+import { Save, RefreshCw, Wifi, BarChart2, Database, RadioTower, Trash2 } from 'lucide-react'
 import { TopBar } from '@/components/layout/TopBar'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useReconnect } from '@/hooks/useWebSocket'
@@ -43,6 +43,7 @@ const Input = ({
 export const SettingsPage = () => {
   const settings = useSettingsStore()
   const wsConnectionState = useNetworkStore((s) => s.wsConnectionState)
+  const hosts = useNetworkStore((s) => s.devices.filter((device) => device.type === 'host'))
   const reconnect = useReconnect()
   const [saved, setSaved] = useState(false)
 
@@ -159,6 +160,56 @@ export const SettingsPage = () => {
                 </div>
               </Field>
             </div>
+          </div>
+
+          {/* Raspberry Pi / Mininet agents */}
+          <div className="glass-card p-5">
+            <SectionHeader
+              icon={<RadioTower className="w-4 h-4" />}
+              title="Traffic Generator Agent Overrides"
+              description="Optionally replace the host IP discovered by ONOS with a separate management address"
+            />
+
+            <div className="mb-3 rounded-lg border border-slate-700/50 bg-slate-800/40 p-3 text-xs text-slate-400">
+              Leave a field empty to contact the agent at the host IP discovered by ONOS. Only enter an IP or URL
+              when the agent uses a different management interface, for example{' '}
+              <code className="text-slate-300">192.168.50.101</code> or{' '}
+              <code className="text-slate-300">http://192.168.50.101:5000</code>.
+            </div>
+
+            {hosts.length > 0 ? (
+              <div className="space-y-0">
+                {hosts.map((host) => (
+                  <Field
+                    key={host.id}
+                    label={host.label}
+                    help={`${host.id} · automatic agent ${host.ipAddress || 'unavailable'}`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={settings.rpiAgents[host.id] ?? ''}
+                        onChange={(value) => settings.updateRpiAgent(host.id, value)}
+                        placeholder={`Automatic: ${host.ipAddress || 'no host IP'}`}
+                      />
+                      {settings.rpiAgents[host.id] && (
+                        <button
+                          type="button"
+                          onClick={() => settings.removeRpiAgent(host.id)}
+                          className="p-2 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                          aria-label={`Remove agent for ${host.label}`}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </Field>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500">
+                No hosts have been discovered yet. Start demo mode or connect ONOS, then return here.
+              </p>
+            )}
           </div>
 
           {/* Dashboard settings */}

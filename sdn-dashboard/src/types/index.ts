@@ -267,6 +267,73 @@ export interface ExperimentResult {
   notes: string
 }
 
+// ─── Traffic Generator Types ─────────────────────────────────────────────────
+
+export type TrafficType = 'ping' | 'tcp' | 'udp'
+
+/** Payload accepted by the Python agent POST /start endpoint. */
+export interface TrafficParams {
+  type: TrafficType
+  target: string
+  duration: number
+  dst_port?: number
+  bw?: number
+  streams?: number
+}
+
+export type TrafficRunStatus =
+  | 'idle'
+  | 'starting'
+  | 'running'
+  | 'stopping'
+  | 'completed'
+  | 'stopped'
+  | 'failed'
+
+export interface TrafficAgentJobInfo {
+  type: TrafficType
+  target: string
+  command?: string[]
+  started_at?: number
+  duration: number
+}
+
+export interface TrafficAgentResult {
+  done: boolean
+  status: 'idle' | 'running' | 'completed' | 'stopped' | 'failed'
+  elapsed_sec?: number
+  duration_sec?: number
+  throughput_mbps?: number
+  jitter_ms?: number
+  lost_pct?: number
+  retransmits?: number
+  packet_loss_pct?: number | null
+  avg_rtt_ms?: number | null
+  exit_code?: number
+  error?: string
+  raw_output?: string
+  job?: TrafficAgentJobInfo
+}
+
+export interface ActiveTrafficJob {
+  id: string
+  sourceDeviceId: string
+  sourceLabel: string
+  sourceAgentAddress: string
+  destinationDeviceId: string
+  destinationLabel: string
+  params: TrafficParams
+  startedAt: string
+}
+
+export interface TrafficHistoryEntry {
+  id: string
+  job: ActiveTrafficJob
+  status: 'completed' | 'stopped' | 'failed'
+  result: TrafficAgentResult
+  completedAt: string
+}
+
 // ─── WebSocket Message Types ──────────────────────────────────────────────────
 
 export type WsMessageType =
@@ -311,6 +378,8 @@ export interface DashboardSettings {
 export interface AppSettings {
   connection: ConnectionSettings
   dashboard: DashboardSettings
+  /** Optional host device ID -> management IP/URL override for its agent. */
+  rpiAgents: Record<string, string>
 }
 
 // ─── UI State Types ───────────────────────────────────────────────────────────

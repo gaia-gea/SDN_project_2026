@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { Play, Pause, Square, Plus, FlaskConical, Clock, CheckCircle, XCircle } from 'lucide-react'
 import { TopBar } from '@/components/layout/TopBar'
 import { TrafficGeneratorPanel } from '@/components/experiments/TrafficGeneratorPanel'
-import { useNetworkStore } from '@/stores/networkStore'
 import type { Experiment, TrafficProfile, ExperimentStatus } from '@/types'
 import { clsx } from 'clsx'
 
