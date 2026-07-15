@@ -44,7 +44,10 @@ interface OnosHost {
   mac: string
   vlan: string
   ipAddresses: string[]
-  location: { elementId: string; port: string }
+  locations: Array<{
+    elementId: string
+    port: string
+  }>
   configured: boolean
 }
 
@@ -82,6 +85,15 @@ interface OnosStatEntry {
     packets: number
     durationSec: number
   }>
+}
+
+interface OnosPortStatistic {
+  port?: number | string
+  bytesReceived?: number
+  bytesSent?: number
+  packetsReceived?: number
+  packetsSent?: number
+  durationSec?: number
 }
 
 // ── Client factory ────────────────────────────────────────────────────────────
@@ -437,12 +449,11 @@ export const fetchPortStats = async (deviceIds: string[]): Promise<PortStatSnaps
     deviceIds.map(async (id) => {
       try {
         const raw = await getPortStats(id)
-        const entries: Array<{ statistics: any }> = raw.statistics[0]?.ports ?? []
-        
+        const entries: OnosPortStatistic[] = raw.statistics[0]?.ports ?? []
         entries.forEach((e) => {
           results.push({
             deviceId: id,
-            port: e.port ?? 0,
+            port: Number(e.port ?? 0),
             rxBytes:   e.bytesReceived   ?? 0,
             txBytes:   e.bytesSent       ?? 0,
             rxPackets: e.packetsReceived ?? 0,

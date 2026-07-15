@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Play, Pause, Square, Plus, FlaskConical, Clock, CheckCircle, XCircle } from 'lucide-react'
 import { TopBar } from '@/components/layout/TopBar'
+import { TrafficGeneratorPanel } from '@/components/experiments/TrafficGeneratorPanel'
 import { useNetworkStore } from '@/stores/networkStore'
 import type { Experiment, TrafficProfile, ExperimentStatus } from '@/types'
 import { clsx } from 'clsx'
@@ -238,6 +239,7 @@ export const ExperimentsPage = () => {
 
         {/* Detail pane */}
         <div className="flex-1 overflow-y-auto p-4">
+          <TrafficGeneratorPanel />  
           {selected ? (
             <>
               <div className="glass-card p-4 mb-4">
