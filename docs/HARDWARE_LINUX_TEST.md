@@ -453,6 +453,21 @@ pkill -f HostAgent.py
 nohup python3 /home/usuario/SDN_project/HostAgent.py > /tmp/host-agent.log 2>&1 &
 ```
 
+
+```
+udo iptables -t nat -A POSTROUTING \
+  -s 10.42.0.0/24 -d 10.0.0.0/24 \
+  -o INTERFAZ_SDN -j MASQUERADE
+Permite también el forwarding:
+sudo iptables -A FORWARD \
+  -s 10.42.0.0/24 -d 10.0.0.0/24 \
+  -p tcp --dport 5005 -j ACCEPT
+
+sudo iptables -A FORWARD \
+  -s 10.0.0.0/24 -d 10.42.0.0/24 \
+  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+```
 ---
 
 ## Checklist final
