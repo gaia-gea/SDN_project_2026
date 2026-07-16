@@ -19,7 +19,7 @@ def allow_dashboard_requests(response):
     return response
 
 
-# Original endpoint tested by the team.
+
 @app.route('/ping/<target>')
 def ping(target):
     out = subprocess.run(
