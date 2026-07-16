@@ -300,7 +300,8 @@ export interface TrafficAgentJobInfo {
 
 export interface TrafficAgentResult {
   done: boolean
-  status: 'idle' | 'running' | 'completed' | 'stopped' | 'failed'
+  // Optional because the minimal demo response only guarantees `done`.
+  status?: 'idle' | 'running' | 'completed' | 'stopped' | 'failed'
   elapsed_sec?: number
   duration_sec?: number
   throughput_mbps?: number

@@ -115,28 +115,45 @@ export const useTrafficStore = create<TrafficState>()((set, get) => ({
 
     try {
       const result = await pollTrafficResult(activeJob.sourceAgentAddress)
+      const normalizedResult: TrafficAgentResult = {
+        ...result,
+        status:
+          result.status ??
+          (result.done
+            ? result.error
+              ? 'failed'
+              : 'completed'
+            : 'running'),
+      }
 
-      if (!result.done) {
-        set({ latestResult: result, error: null, isPolling: false })
+      if (!normalizedResult.done) {
+        set({ latestResult: normalizedResult, error: null, isPolling: false })
         return
       }
 
-      if (result.status === 'completed') {
+      if (normalizedResult.status === 'completed') {
         set((state) => ({
           status: 'completed',
           activeJob: null,
-          latestResult: result,
+          latestResult: normalizedResult,
           error: null,
           isPolling: false,
-          history: addHistoryEntry(state.history, activeJob, 'completed', result),
+          history: addHistoryEntry(
+            state.history,
+            activeJob,
+            'completed',
+            normalizedResult,
+          ),
         }))
         return
       }
 
       const failedResult: TrafficAgentResult = {
-        ...result,
+        ...normalizedResult,
         status: 'failed',
-        error: result.error ?? `Agent finished with status ${result.status}`,
+        error:
+          normalizedResult.error ??
+          `Agent finished with status ${normalizedResult.status}`,
       }
 
       set((state) => ({

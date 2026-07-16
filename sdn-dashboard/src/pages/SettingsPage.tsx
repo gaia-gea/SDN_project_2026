@@ -162,7 +162,7 @@ export const SettingsPage = () => {
             </div>
           </div>
 
-          {/* Raspberry Pi / Mininet agents */}
+          {/* Traffic agents running on the Linux hosts */}
           <div className="glass-card p-5">
             <SectionHeader
               icon={<RadioTower className="w-4 h-4" />}
@@ -174,7 +174,7 @@ export const SettingsPage = () => {
               Leave a field empty to contact the agent at the host IP discovered by ONOS. Only enter an IP or URL
               when the agent uses a different management interface, for example{' '}
               <code className="text-slate-300">192.168.50.101</code> or{' '}
-              <code className="text-slate-300">http://192.168.50.101:5000</code>.
+              <code className="text-slate-300">http://192.168.50.101:5005</code>.
             </div>
 
             {hosts.length > 0 ? (

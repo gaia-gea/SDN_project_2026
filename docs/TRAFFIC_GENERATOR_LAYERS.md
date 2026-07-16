@@ -32,7 +32,7 @@ Ejecutar estos comandos en la máquina Linux donde está instalado Mininet:
 
 ```bash
 sudo apt update
-sudo apt install python3-flask python3-flask-cors iperf3 curl
+sudo apt install python3-flask iperf3 curl
 ```
 
 Comprobar las instalaciones:
@@ -46,18 +46,18 @@ curl --version
 Guardar el agente HTTP en una ruta accesible desde Linux. Por ejemplo:
 
 ```text
-/home/USUARIO/SDN_project/agent.py
+/home/USUARIO/SDN_project/HostAgent.py
 ```
 
-Los hosts de Mininet utilizan espacios de red diferentes, pero comparten el sistema de archivos de Linux. Por eso todos pueden ejecutar el mismo archivo `agent.py`.
+Los hosts de Mininet utilizan espacios de red diferentes, pero comparten el sistema de archivos de Linux. Por eso todos pueden ejecutar el mismo archivo `HostAgent.py`.
 
 Antes de iniciar Mininet, comprobar la sintaxis del agente:
 
 ```bash
-python3 -m py_compile /home/USUARIO/SDN_project/agent.py
+python3 -m py_compile /home/USUARIO/SDN_project/HostAgent.py
 ```
 
-> Sustituir `/home/USUARIO/SDN_project/agent.py` por la ruta real del archivo.
+> Sustituir `/home/USUARIO/SDN_project/HostAgent.py` por la ruta real del archivo.
 
 ---
 
@@ -254,21 +254,21 @@ El agente debe proporcionar estos endpoints:
 Desde la consola de Mininet:
 
 ```bash
-mininet> h1 python3 /home/USUARIO/SDN_project/agent.py > /tmp/h1-agent.log 2>&1 &
-mininet> h2 python3 /home/USUARIO/SDN_project/agent.py > /tmp/h2-agent.log 2>&1 &
-mininet> h3 python3 /home/USUARIO/SDN_project/agent.py > /tmp/h3-agent.log 2>&1 &
-mininet> h4 python3 /home/USUARIO/SDN_project/agent.py > /tmp/h4-agent.log 2>&1 &
+mininet> h1 python3 /home/USUARIO/SDN_project/HostAgent.py > /tmp/h1-agent.log 2>&1 &
+mininet> h2 python3 /home/USUARIO/SDN_project/HostAgent.py > /tmp/h2-agent.log 2>&1 &
+mininet> h3 python3 /home/USUARIO/SDN_project/HostAgent.py > /tmp/h3-agent.log 2>&1 &
+mininet> h4 python3 /home/USUARIO/SDN_project/HostAgent.py > /tmp/h4-agent.log 2>&1 &
 ```
 
-> Sustituir la ruta del ejemplo por la ruta real de `agent.py`.
+> Sustituir la ruta del ejemplo por la ruta real de `HostAgent.py`.
 
-Cada agente puede escuchar en el puerto 5000 porque cada host tiene su propio espacio de red.
+Cada agente escucha en el puerto 5005.
 
 Comprobar que el proceso existe:
 
 ```bash
-mininet> h1 pgrep -a -f agent.py
-mininet> h2 pgrep -a -f agent.py
+mininet> h1 pgrep -a -f HostAgent.py
+mininet> h2 pgrep -a -f HostAgent.py
 ```
 
 Si un agente no arranca, revisar su log:
@@ -282,7 +282,7 @@ mininet> h1 cat /tmp/h1-agent.log
 Desde el propio `h1`:
 
 ```bash
-mininet> h1 curl http://127.0.0.1:5000/health
+mininet> h1 curl http://127.0.0.1:5005/health
 ```
 
 Respuesta esperada:
@@ -297,7 +297,7 @@ Respuesta esperada:
 También se puede comprobar el agente de otro host a través de la red de Mininet:
 
 ```bash
-mininet> h1 curl http://10.0.0.2:5000/health
+mininet> h1 curl http://10.0.0.2:5005/health
 ```
 
 ### 3.3. Iniciar un ping mediante HTTP
@@ -305,7 +305,7 @@ mininet> h1 curl http://10.0.0.2:5000/health
 Desde `h1`, enviar una petición al agente local para hacer ping a `h2`:
 
 ```bash
-mininet> h1 curl -X POST http://127.0.0.1:5000/start -H "Content-Type: application/json" -d '{"type":"ping","target":"10.0.0.2","duration":3}'
+mininet> h1 curl -X POST http://127.0.0.1:5005/start -H "Content-Type: application/json" -d '{"type":"ping","target":"10.0.0.2","duration":3}'
 ```
 
 Respuesta esperada:
@@ -319,7 +319,7 @@ Respuesta esperada:
 Consultar el estado:
 
 ```bash
-mininet> h1 curl http://127.0.0.1:5000/result
+mininet> h1 curl http://127.0.0.1:5005/result
 ```
 
 Mientras se ejecuta:
@@ -355,13 +355,13 @@ mininet> h2 pgrep -a iperf3
 Iniciar la prueba desde el agente de `h1`:
 
 ```bash
-mininet> h1 curl -X POST http://127.0.0.1:5000/start -H "Content-Type: application/json" -d '{"type":"tcp","target":"10.0.0.2","dst_port":5201,"duration":5,"streams":1}'
+mininet> h1 curl -X POST http://127.0.0.1:5005/start -H "Content-Type: application/json" -d '{"type":"tcp","target":"10.0.0.2","dst_port":5201,"duration":5,"streams":1}'
 ```
 
 Consultar `/result` hasta que `done` sea `true`:
 
 ```bash
-mininet> h1 curl http://127.0.0.1:5000/result
+mininet> h1 curl http://127.0.0.1:5005/result
 ```
 
 ### 3.5. Iniciar tráfico UDP mediante HTTP
@@ -369,13 +369,13 @@ mininet> h1 curl http://127.0.0.1:5000/result
 Ejecutar una transmisión de 10 Mbps:
 
 ```bash
-mininet> h1 curl -X POST http://127.0.0.1:5000/start -H "Content-Type: application/json" -d '{"type":"udp","target":"10.0.0.2","dst_port":5201,"bw":10,"duration":5,"streams":1}'
+mininet> h1 curl -X POST http://127.0.0.1:5005/start -H "Content-Type: application/json" -d '{"type":"udp","target":"10.0.0.2","dst_port":5201,"bw":10,"duration":5,"streams":1}'
 ```
 
 Consultar el resultado:
 
 ```bash
-mininet> h1 curl http://127.0.0.1:5000/result
+mininet> h1 curl http://127.0.0.1:5005/result
 ```
 
 La respuesta final debe contener valores similares a:
@@ -395,13 +395,13 @@ La respuesta final debe contener valores similares a:
 Iniciar una prueba larga:
 
 ```bash
-mininet> h1 curl -X POST http://127.0.0.1:5000/start -H "Content-Type: application/json" -d '{"type":"udp","target":"10.0.0.2","dst_port":5201,"bw":10,"duration":60,"streams":1}'
+mininet> h1 curl -X POST http://127.0.0.1:5005/start -H "Content-Type: application/json" -d '{"type":"udp","target":"10.0.0.2","dst_port":5201,"bw":10,"duration":60,"streams":1}'
 ```
 
 Detenerla:
 
 ```bash
-mininet> h1 curl -X POST http://127.0.0.1:5000/stop
+mininet> h1 curl -X POST http://127.0.0.1:5005/stop
 ```
 
 Respuesta esperada:
@@ -414,7 +414,7 @@ Respuesta esperada:
 
 ### Criterio de finalización de la capa 3
 
-- [ ] Cada host ejecuta su propio `agent.py`.
+- [ ] Cada host ejecuta su propio `HostAgent.py`.
 - [ ] `/health` responde desde todos los agentes.
 - [ ] `/start` puede iniciar un ping.
 - [ ] `/result` devuelve el resultado del ping.
@@ -433,7 +433,7 @@ Los hosts `10.0.0.1`, `10.0.0.2`, etc. existen dentro de la red virtual creada p
 Si Codex y el dashboard se ejecutan en Windows y Mininet se ejecuta en otra máquina o máquina virtual Linux, Windows probablemente no podrá acceder directamente a:
 
 ```text
-http://10.0.0.1:5000
+http://10.0.0.1:5005
 ```
 
 Esto no significa que el agente esté mal implementado. La dirección puede ser accesible únicamente dentro de Mininet.
@@ -441,10 +441,10 @@ Esto no significa que el agente esté mal implementado. La dirección puede ser 
 Para verificar hoy la capa 3, ejecutar las peticiones `curl` desde la consola de Mininet, por ejemplo:
 
 ```bash
-mininet> h1 curl http://127.0.0.1:5000/health
+mininet> h1 curl http://127.0.0.1:5005/health
 ```
 
-Cuando se utilice hardware físico, el dashboard podrá conectarse a los agentes si Windows y las Raspberry Pi están en la misma red y el puerto 5000 es accesible.
+El dashboard podrá conectarse a los agentes si el computador donde se abre el navegador y los computadores Linux están en una red con acceso al puerto 5005.
 
 Para conectar el dashboard de Windows con Mininet antes de disponer del hardware sería necesario añadir una ruta, un proxy o una red de gestión entre Windows y Linux. Eso queda fuera de las capas 1–3.
 
@@ -481,20 +481,20 @@ mininet> h2 iperf3 -s -D -p 5201
 ### El agente no responde
 
 ```bash
-mininet> h1 pgrep -a -f agent.py
+mininet> h1 pgrep -a -f HostAgent.py
 mininet> h1 cat /tmp/h1-agent.log
 mininet> h1 ss -ltnp
 ```
 
-Comprobar que Flask escucha en `0.0.0.0:5000`.
+Comprobar que Flask escucha en `0.0.0.0:5005`.
 
 ### `/start` devuelve `409`
 
 Ya existe un trabajo activo. Consultarlo o detenerlo:
 
 ```bash
-mininet> h1 curl http://127.0.0.1:5000/result
-mininet> h1 curl -X POST http://127.0.0.1:5000/stop
+mininet> h1 curl http://127.0.0.1:5005/result
+mininet> h1 curl -X POST http://127.0.0.1:5005/stop
 ```
 
 ### `/result` devuelve un error de interpretación
@@ -522,7 +522,7 @@ trafficStore.ts
 rpiAgent.ts
       │ HTTP
       ▼
-agent.py
+HostAgent.py
       │
       ├── ping
       └── iperf3
@@ -566,13 +566,13 @@ Ejemplos de direcciones válidas:
 ```text
 10.0.0.1
 mininet-host.local
-http://10.0.0.1:5000
+http://10.0.0.1:5005
 ```
 
 Si no se especifica protocolo ni puerto, el servicio utiliza:
 
 ```text
-http://<dirección>:5000
+http://<dirección>:5005
 ```
 
 #### Verificación de la capa 4
@@ -694,7 +694,7 @@ La dirección del agente se resuelve con esta prioridad:
 2. host.ipAddress descubierto por ONOS y almacenado en networkStore
 ```
 
-Por tanto, Mininet no necesita una tabla hardcodeada. Si ONOS descubre `h-1` con IP `10.0.0.1`, el dashboard intenta automáticamente `http://10.0.0.1:5000`.
+Por tanto, no se necesita una tabla hardcodeada. Si ONOS descubre `h-1` con IP `10.0.0.1`, el dashboard intenta automáticamente `http://10.0.0.1:5005`.
 
 Los overrides opcionales sí se guardan en `localStorage` mediante el middleware `persist` de Zustand. Se utilizan únicamente cuando el agente escucha en una dirección de gestión distinta de la IP de tráfico.
 
@@ -735,7 +735,7 @@ El comando debe terminar sin errores.
 
 Después de validar individualmente las capas 1–3:
 
-1. Confirmar que el dashboard puede alcanzar `http://<agente>:5000/health`.
+1. Confirmar que el dashboard puede alcanzar `http://<agente>:5005/health`.
 2. Abrir Settings y guardar el agente del host origen.
 3. Abrir Experiments y pulsar **Test agent**.
 4. Probar primero ICMP durante tres segundos.

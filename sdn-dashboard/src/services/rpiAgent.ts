@@ -3,7 +3,7 @@ import type {
   TrafficParams,
 } from '@/types'
 
-const DEFAULT_AGENT_PORT = 5000
+const AGENT_PORT = 5005
 const REQUEST_TIMEOUT_MS = 8_000
 
 export interface AgentHealth {
@@ -14,26 +14,24 @@ export interface AgentHealth {
 
 interface StartResponse {
   status: 'started'
-  pid?: number
-  job?: unknown
 }
 
 interface StopResponse {
-  status: 'stopped' | 'idle'
+  status: 'stopped'
 }
 
 /**
- * Accepts an IP/hostname (10.0.0.1) or a complete URL
- * (http://10.0.0.1:5000) and returns a normalized base URL.
+ * The project contract follows STUDENT_EXTENSIONS.md:
+ * one Flask agent on port 5005 with /start, /stop and /result.
+ * A complete URL remains accepted as an optional management override.
  */
 export const getAgentBaseUrl = (address: string): string => {
   const value = address.trim().replace(/\/$/, '')
   if (!value) throw new Error('Agent address is empty')
 
   if (/^https?:\/\//i.test(value)) return value
-
-  const hasExplicitPort = value.includes(':')
-  return `http://${value}${hasExplicitPort ? '' : `:${DEFAULT_AGENT_PORT}`}`
+  if (value.includes(':')) return `http://${value}`
+  return `http://${value}:${AGENT_PORT}`
 }
 
 const requestJson = async <T>(
@@ -80,12 +78,15 @@ const requestJson = async <T>(
     return data as T
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new Error(`Agent ${address} did not respond within ${REQUEST_TIMEOUT_MS / 1000}s`)
+      throw new Error(
+        `Agent ${address} did not respond within ${REQUEST_TIMEOUT_MS / 1000}s`,
+      )
     }
 
     if (error instanceof TypeError) {
       throw new Error(
-        `Cannot reach agent ${address}. Check its IP, port, CORS and network routing.`,
+        `Cannot reach agent ${getAgentBaseUrl(address)}. ` +
+          'Check port 5005, CORS and network routing.',
       )
     }
 
@@ -110,7 +111,10 @@ export const startTraffic = (
 export const stopTraffic = (address: string): Promise<StopResponse> =>
   requestJson<StopResponse>(address, '/stop', { method: 'POST' })
 
-export const pollTrafficResult = (
+export const pollResult = (
   address: string,
 ): Promise<TrafficAgentResult> =>
   requestJson<TrafficAgentResult>(address, '/result')
+
+// Existing store import kept as a descriptive alias.
+export const pollTrafficResult = pollResult
