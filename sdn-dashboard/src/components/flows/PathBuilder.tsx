@@ -1,10 +1,12 @@
-import { ArrowRight, X, Zap, RotateCcw } from 'lucide-react'
+import { useState } from 'react'
+import { AlertTriangle, ArrowRight, CheckCircle2, Loader2, X, Zap, RotateCcw } from 'lucide-react'
 import { useNetworkStore } from '@/stores/networkStore'
 import { useFlowStore } from '@/stores/flowStore'
 import { useSliceStore } from '@/stores/sliceStore'
 import { colorClasses } from './SliceBar'
 import type { FlowRule, SliceColor } from '@/types'
 import { clsx } from 'clsx'
+import { addFlow as pushFlowToOnos } from '@/services/onosApi'
 
 interface PathBuilderProps {
   srcId: string | null
@@ -19,6 +21,9 @@ export const PathBuilder = ({ srcId, dstId, onReset, onCancel, selectedSliceId }
   const links = useNetworkStore(s => s.links)
   const { addFlow } = useFlowStore()
   const { slices, assignFlowToSlice } = useSliceStore()
+  const [isDeploying, setIsDeploying] = useState(false)
+  const [deploymentError, setDeploymentError] = useState<string | null>(null)
+  const [deployedRuleCount, setDeployedRuleCount] = useState<number | null>(null)
 
   const src = devices.find(d => d.id === srcId)
   const dst = devices.find(d => d.id === dstId)
@@ -28,7 +33,11 @@ export const PathBuilder = ({ srcId, dstId, onReset, onCancel, selectedSliceId }
   const findPath = (srcId: string, dstId: string): string[] => {
     if (!srcId || !dstId) return []
     const adj: Record<string, string[]> = {}
-    links.forEach(l => {
+    links.filter(l => {
+      const source = devices.find(device => device.id === l.sourceDeviceId)
+      const target = devices.find(device => device.id === l.targetDeviceId)
+      return l.isUp && source?.type !== 'controller' && target?.type !== 'controller'
+    }).forEach(l => {
       if (!adj[l.sourceDeviceId]) adj[l.sourceDeviceId] = []
       if (!adj[l.targetDeviceId]) adj[l.targetDeviceId] = []
       adj[l.sourceDeviceId].push(l.targetDeviceId)
@@ -54,56 +63,110 @@ export const PathBuilder = ({ srcId, dstId, onReset, onCancel, selectedSliceId }
 
   const switchesOnPath = path.filter(id => devices.find(d => d.id === id)?.type === 'switch')
 
-  const deployFlow = () => {
-    if (!srcId || !dstId || path.length < 2) return
+  const getOutputPort = (route: string[], switchIndex: number): number => {
+    const switchId = route[switchIndex]
+    const nextHopId = route[switchIndex + 1]
+    const link = links.find(item => item.isUp && (
+      (item.sourceDeviceId === switchId && item.targetDeviceId === nextHopId) ||
+      (item.targetDeviceId === switchId && item.sourceDeviceId === nextHopId)
+    ))
+
+    if (!link) throw new Error(`No active link from ${switchId} to ${nextHopId}`)
+    const port = link.sourceDeviceId === switchId ? link.sourcePort : link.targetPort
+    if (!Number.isFinite(port) || port <= 0) {
+      throw new Error(`Invalid output port from ${switchId} to ${nextHopId}`)
+    }
+    return port
+  }
+
+  const deployFlow = async () => {
+    if (!srcId || !dstId || path.length < 2 || isDeploying) return
+    if (src?.type !== 'host' || dst?.type !== 'host') {
+      setDeploymentError('Source and destination must both be hosts.')
+      return
+    }
+    if (!src.ipAddress || !dst.ipAddress || !src.macAddress || !dst.macAddress) {
+      setDeploymentError('Both hosts need an IP and MAC address discovered by ONOS.')
+      return
+    }
+
+    setIsDeploying(true)
+    setDeploymentError(null)
+    setDeployedRuleCount(null)
 
     const priority = slice?.priority ?? 40000
     const newFlowIds: string[] = []
+    const routes = [
+      { route: path, source: src, destination: dst },
+      { route: [...path].reverse(), source: dst, destination: src },
+    ]
 
-    switchesOnPath.forEach((swId, idx) => {
-      // Find the next hop link to determine output port
-      const swIdx = path.indexOf(swId)
-      const nextHopId = path[swIdx + 1]
-      const link = nextHopId
-        ? links.find(l =>
-            (l.sourceDeviceId === swId && l.targetDeviceId === nextHopId) ||
-            (l.targetDeviceId === swId && l.sourceDeviceId === nextHopId),
-          )
-        : undefined
-      const outPort = link
-        ? (link.sourceDeviceId === swId ? link.sourcePort : link.targetPort)
-        : 1
+    try {
+      for (const { route, source, destination } of routes) {
+        for (let index = 0; index < route.length - 1; index += 1) {
+          const switchId = route[index]
+          if (devices.find(device => device.id === switchId)?.type !== 'switch') continue
 
-      const flow: FlowRule = {
-        id: `flow-${Date.now()}-${idx}`,
-        deviceId: swId,
-        tableId: 0,
-        priority,
-        timeout: 0,
-        hardTimeout: 0,
-        isPermanent: true,
-        state: 'ADDED',
-        bytes: 0,
-        packets: 0,
-        createdAt: new Date().toISOString(),
-        appId: slice ? `slice:${slice.name}` : 'path-builder',
-        match: {
-          ethType: '0x0800',
-          ...(src?.ipAddress && { ipSrc: src.ipAddress + '/32' }),
-          ...(dst?.ipAddress && { ipDst: dst.ipAddress + '/32' }),
-        },
-        actions: [{ type: 'OUTPUT', port: outPort }],
+          const outPort = getOutputPort(route, index)
+          const matches = [
+            {
+              ethType: '0x0800',
+              ethSrc: source.macAddress,
+              ethDst: destination.macAddress,
+              ipSrc: `${source.ipAddress}/32`,
+              ipDst: `${destination.ipAddress}/32`,
+            },
+            {
+              ethType: '0x0806',
+              ethSrc: source.macAddress,
+            },
+          ]
+
+          for (const match of matches) {
+            const actions = [{ type: 'OUTPUT' as const, port: outPort }]
+            const result = await pushFlowToOnos(
+              switchId,
+              priority,
+              match,
+              actions,
+              true,
+              0,
+              'org.onosproject.rest',
+            )
+            const flow: FlowRule = {
+              id: result.flowId,
+              deviceId: result.deviceId,
+              tableId: 0,
+              priority,
+              timeout: 0,
+              hardTimeout: 0,
+              isPermanent: true,
+              state: 'PENDING_ADD',
+              bytes: 0,
+              packets: 0,
+              createdAt: new Date().toISOString(),
+              appId: 'org.onosproject.rest',
+              match,
+              actions,
+            }
+            addFlow(flow)
+            newFlowIds.push(flow.id)
+          }
+        }
       }
-      addFlow(flow)
-      newFlowIds.push(flow.id)
-    })
 
-    // Assign to slice if selected
-    if (selectedSliceId) {
-      newFlowIds.forEach(id => assignFlowToSlice(id, selectedSliceId))
+      if (selectedSliceId) {
+        newFlowIds.forEach(id => assignFlowToSlice(id, selectedSliceId))
+      }
+      setDeployedRuleCount(newFlowIds.length)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown ONOS error'
+      setDeploymentError(
+        `${message}. ${newFlowIds.length} rule${newFlowIds.length === 1 ? '' : 's'} installed before the failure.`,
+      )
+    } finally {
+      setIsDeploying(false)
     }
-
-    onReset()
   }
 
   const NodeChip = ({ id, step }: { id: string | null; step: string }) => {
@@ -189,20 +252,42 @@ export const PathBuilder = ({ srcId, dstId, onReset, onCancel, selectedSliceId }
         </div>
       )}
 
+      {deploymentError && (
+        <div className="flex items-start gap-2 rounded border border-red-500/30 bg-red-500/10 p-2 text-xs text-red-300">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+          <span>{deploymentError}</span>
+        </div>
+      )}
+      {deployedRuleCount !== null && (
+        <div className="flex items-center gap-2 rounded border border-green-500/30 bg-green-500/10 p-2 text-xs text-green-300">
+          <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0" />
+          Installed {deployedRuleCount} IPv4/ARP rules in both directions.
+        </div>
+      )}
+
       <div className="flex gap-2">
         <button
-          onClick={onReset}
+          onClick={() => {
+            setDeploymentError(null)
+            setDeployedRuleCount(null)
+            onReset()
+          }}
+          disabled={isDeploying}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-sm text-slate-300 transition-colors"
         >
           <RotateCcw className="w-3.5 h-3.5" /> Reset
         </button>
         <button
           onClick={deployFlow}
-          disabled={!srcId || !dstId || path.length < 2}
+          disabled={!srcId || !dstId || path.length < 2 || isDeploying}
           className="flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded bg-sdn-600 hover:bg-sdn-500 text-sm text-white disabled:opacity-40 transition-colors"
         >
-          <Zap className="w-3.5 h-3.5" />
-          Deploy {switchesOnPath.length} Flow Rule{switchesOnPath.length !== 1 ? 's' : ''}
+          {isDeploying
+            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            : <Zap className="h-3.5 w-3.5" />}
+          {isDeploying
+            ? 'Installing…'
+            : `Deploy ${switchesOnPath.length * 4} Flow Rules`}
         </button>
       </div>
     </div>

@@ -12,7 +12,7 @@ import { AlertsPage     } from '@/pages/AlertsPage'
 import { SettingsPage   } from '@/pages/SettingsPage'
 import { useWebSocketManager } from '@/hooks/useWebSocket'
 import { useOnosPolling } from '@/hooks/useOnosPolling'
-import { startMockSimulation } from '@/utils/mockData'
+import { startMockSimulation, stopMockSimulation } from '@/utils/mockData'
 
 // Read from .env.local — defaults to demo mode so the project works out of the box
 const DEMO_MODE = import.meta.env.VITE_DEMO_MODE !== 'false'
@@ -27,27 +27,29 @@ const App = () => {
   useWebSocketManager()
 
   useEffect(() => {
-    if (DEMO_MODE) startMockSimulation()
+    if (!DEMO_MODE) return
+
+    startMockSimulation()
+    return () => stopMockSimulation()
   }, [])
 
-  RealModePolling() //{!DEMO_MODE && <Route path="*" element={<RealModePolling />} />}
   return (
-    <Routes>
-      <Route element={<AppShell />}>
-        {/* Inject real-mode polling once, inside the router context */}
-        
-
-        <Route path="/"            element={<DashboardPage />} />
-        <Route path="/topology"    element={<TopologyPage />} />
-        <Route path="/devices"     element={<DevicesPage />} />
-        <Route path="/flows"       element={<FlowsPage />} />
-        <Route path="/metrics"     element={<MetricsPage />} />
-        <Route path="/sfc"         element={<SFCPage />} />
-        <Route path="/experiments" element={<ExperimentsPage />} />
-        <Route path="/alerts"      element={<AlertsPage />} />
-        <Route path="/settings"    element={<SettingsPage />} />
-      </Route>
-    </Routes>
+    <>
+      {!DEMO_MODE && <RealModePolling />}
+      <Routes>
+        <Route element={<AppShell />}>
+          <Route path="/"            element={<DashboardPage />} />
+          <Route path="/topology"    element={<TopologyPage />} />
+          <Route path="/devices"     element={<DevicesPage />} />
+          <Route path="/flows"       element={<FlowsPage />} />
+          <Route path="/metrics"     element={<MetricsPage />} />
+          <Route path="/sfc"         element={<SFCPage />} />
+          <Route path="/experiments" element={<ExperimentsPage />} />
+          <Route path="/alerts"      element={<AlertsPage />} />
+          <Route path="/settings"    element={<SettingsPage />} />
+        </Route>
+      </Routes>
+    </>
   )
 }
 

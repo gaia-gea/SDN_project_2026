@@ -169,7 +169,7 @@ Respuesta esperada:
 Después, probar usando la IP real:
 
 ```bash
-curl http://10.0.0.1:5005/health
+curl -X POST http://10.40.0.220:5010/relay/10.0.0.3:5005/health
 ```
 
 Cambiar `10.0.0.1` por la IP del computador correspondiente.

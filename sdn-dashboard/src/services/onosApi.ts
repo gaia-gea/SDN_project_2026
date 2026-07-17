@@ -332,12 +332,31 @@ export const transformOnosDevice = (d: OnosDevice): Device => ({
 export const transformOnosHost = (h: OnosHost): Device => ({
   id: h.id,
   type: 'host',
-  label: h.id.slice(0, 17),           // MAC as label until resolved
+  label: h.ipAddresses?.[0] ? `Host ${h.ipAddresses[0]}` : `Host ${h.mac}`,
   status: 'online',
   ipAddress: h.ipAddresses?.[0] ?? '',
   macAddress: h.mac,
   lastSeen: new Date().toISOString(),
+  metadata: {
+    configured: String(h.configured),
+    vlan: h.vlan,
+  },
 })
+
+const compareIpAddresses = (left: Device, right: Device): number => {
+  const toOctets = (value: string) =>
+    value.split('.').map((part) => Number(part))
+
+  const leftOctets = toOctets(left.ipAddress)
+  const rightOctets = toOctets(right.ipAddress)
+
+  for (let index = 0; index < 4; index += 1) {
+    const difference = (leftOctets[index] ?? 256) - (rightOctets[index] ?? 256)
+    if (difference !== 0) return difference
+  }
+
+  return left.id.localeCompare(right.id)
+}
 
 let linkSerial = 0
 export const transformOnosLink = (l: OnosLink): Link => ({
@@ -384,7 +403,16 @@ export const fetchTopology = async (): Promise<{
   }
 
   const switches: Device[] = rawDevices.map(transformOnosDevice)
-  const hosts: Device[]    = rawHosts.map(transformOnosHost)
+  const hosts: Device[] = rawHosts
+    .map(transformOnosHost)
+    .sort(compareIpAddresses)
+    .map((host, index) => ({
+      ...host,
+      // ONOS does not provide a human-friendly host name. Number the real
+      // hosts deterministically by their discovered IP address while keeping
+      // the ONOS host ID/MAC as the stable internal identity.
+      label: `Host ${index + 1}`,
+    }))
 
   // ONOS /links returns each link twice (A→B and B→A). Deduplicate by sorted ID pair.
   const seen = new Set<string>()
@@ -396,7 +424,21 @@ export const fetchTopology = async (): Promise<{
       return true
     })
     .map(transformOnosLink)
-
+  switches.forEach((sw, index) => {
+    links.push({
+      id: `ctrl-${sw.id}`,
+      sourceDeviceId: controller.id,
+      sourcePort: index + 1,
+      targetDeviceId: sw.id,
+      targetPort: 0,
+      utilizationPct: 0,
+      capacityMbps: 0,
+      throughputMbps: 0,
+      latencyMs: 0,
+      packetLossPct: 0,
+      isUp: sw.status === 'online',
+    })
+  })
   // Add host-access links from host location info
   rawHosts.forEach((h) => {
     //if (!h.location?.elementId) return

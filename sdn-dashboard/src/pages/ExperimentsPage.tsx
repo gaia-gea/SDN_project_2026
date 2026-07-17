@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Play, Pause, Square, Plus, FlaskConical, Clock, CheckCircle, XCircle } from 'lucide-react'
+import { Play, Pause, Square, Plus, FlaskConical, Clock, CheckCircle, XCircle, Radio } from 'lucide-react'
 import { TopBar } from '@/components/layout/TopBar'
 import { TrafficGeneratorPanel } from '@/components/experiments/TrafficGeneratorPanel'
 import type { Experiment, TrafficProfile, ExperimentStatus } from '@/types'
@@ -223,6 +223,33 @@ export const ExperimentsPage = () => {
             </button>
           </div>
           <div className="flex-1 overflow-y-auto p-3 space-y-3">
+      <div
+        onClick={() => setSelectedId('traffic-generator')}
+        className={clsx(
+          'glass-card p-4 cursor-pointer hover:bg-slate-800/40 transition-colors',
+          selectedId === 'traffic-generator' &&
+            'border-sdn-500/40 bg-sdn-500/5',
+        )}
+      >
+        <div className="flex items-start justify-between gap-3 mb-2">
+          <div className="flex items-center gap-2">
+            <Radio className="w-4 h-4 text-sdn-400 flex-shrink-0" />
+
+            <p className="font-semibold text-slate-100 text-sm">
+              Traffic Generator
+            </p>
+          </div>
+
+          <span className="badge badge-green">
+            Hardware
+          </span>
+        </div>
+
+        <p className="text-xs text-slate-400 leading-relaxed">
+          Generate real ICMP, TCP or UDP traffic between discovered hosts.
+        </p>
+      </div>
+
             {experiments.map((exp) => (
               <ExperimentCard
                 key={exp.id}
@@ -238,8 +265,9 @@ export const ExperimentsPage = () => {
 
         {/* Detail pane */}
         <div className="flex-1 overflow-y-auto p-4">
-          <TrafficGeneratorPanel />  
-          {selected ? (
+          {selectedId === 'traffic-generator' ? (
+            <TrafficGeneratorPanel />
+          ) : selected ? (
             <>
               <div className="glass-card p-4 mb-4">
                 <h2 className="text-base font-semibold text-slate-100 mb-1">{selected.name}</h2>

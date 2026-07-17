@@ -283,6 +283,16 @@ export const NetworkTopologyGraph = forwardRef<NetworkTopologyGraphHandle, Netwo
   const [showLabels, setShowLabels] = useState(true)
   const [currentLayout, setCurrentLayout] = useState<LayoutKey>('hierarchical')
   const [containerH, setContainerH] = useState(0)
+  // Keep Cytoscape event handlers connected to the latest React props.
+  const pathBuilderModeRef = useRef(pathBuilderMode)
+  const onPathNodeClickRef = useRef(onPathNodeClick)
+  const onSelectRef = useRef(onSelect)
+
+  useEffect(() => {
+    pathBuilderModeRef.current = pathBuilderMode
+    onPathNodeClickRef.current = onPathNodeClick
+    onSelectRef.current = onSelect
+  }, [pathBuilderMode, onPathNodeClick, onSelect])
 
   // ── Expose exportPng to parent via ref ─────────────────────────────────────
   useImperativeHandle(ref, () => ({
@@ -560,12 +570,15 @@ export const NetworkTopologyGraph = forwardRef<NetworkTopologyGraphHandle, Netwo
     cy.on('tap', 'node', (evt) => {
       const node = evt.target
       const device: Device = node.data('device')
-      if (pathBuilderMode) {
-        onPathNodeClick?.(node.id(), node.data('deviceType'))
+      if (pathBuilderModeRef.current) {
+        onPathNodeClickRef.current?.(
+          node.id(),
+          node.data('deviceType'),
+        )
       }
       const sel: SelectedElement = { type: 'device', id: device.id }
       setSelectedElement(sel)
-      onSelect?.(sel)
+      onSelectRef.current?.(sel)
     })
 
     // Edge click
@@ -574,21 +587,21 @@ export const NetworkTopologyGraph = forwardRef<NetworkTopologyGraphHandle, Netwo
       const link: Link = edge.data('link')
       const sel: SelectedElement = { type: 'link', id: link.id }
       setSelectedElement(sel)
-      onSelect?.(sel)
+      onSelectRef.current?.(sel)
     })
 
     // Background click → deselect
     cy.on('tap', (evt) => {
       if (evt.target === cy) {
         setSelectedElement({ type: null, id: null })
-        onSelect?.({ type: null, id: null })
+        onSelectRef.current?.({ type: null, id: null })
         setTooltip(null)
       }
     })
 
     // Hover tooltip + path builder cursor
     cy.on('mouseover', 'node', (evt) => {
-      if (pathBuilderMode) {
+      if (pathBuilderModeRef.current) {
         evt.target.style({ 'cursor': 'crosshair' })
       }
       const node = evt.target
@@ -619,8 +632,7 @@ export const NetworkTopologyGraph = forwardRef<NetworkTopologyGraphHandle, Netwo
       draggedNodesRef.current.add(evt.target.id())
     })
     cy.on('zoom pan', () => setTooltip(null))
-  }, [setSelectedElement, onSelect, pathBuilderMode, onPathNodeClick])
-
+  }, [setSelectedElement, applyLayeredPositions])
   return (
     <div
       ref={containerRef}
