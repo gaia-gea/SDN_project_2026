@@ -525,8 +525,13 @@ directions.
 
 Rules are submitted through `onosApi.addFlow()` as permanent flows owned by
 `org.onosproject.rest`. The selected slice priority is used when a slice is
-active; otherwise the priority is `40000`. Successfully returned rules are
-added to `flowStore` and associated with the active slice.
+active; otherwise the priority is `50000`. The default is deliberately higher
+than the general priority-`40000` ARP rule that sends packets to the controller;
+an active slice must likewise use a priority above `40000` for this experiment.
+If both rules have the same priority, OpenFlow does not guarantee that the more
+specific PathBuilder rule wins, and ARP can be consumed by the controller
+instead of traversing the selected path. Successfully returned rules are added
+to `flowStore` and associated with the active slice.
 
 ### User feedback
 
@@ -567,7 +572,134 @@ switches.
 
 ---
 
-## 11. Future updates
+## 11. UDP meter rules from the Flow Rule Editor
+
+### Objective
+
+Support the bandwidth-limiting experiment in Extension B, Test 2 entirely from
+the dashboard. An operator can create a meter and install a port-specific UDP
+flow that applies the meter before forwarding traffic.
+
+### Files involved
+
+- `sdn-dashboard/src/types/index.ts`
+- `sdn-dashboard/src/services/onosApi.ts`
+- `sdn-dashboard/src/components/flows/FlowRuleEditor.tsx`
+
+### Previous behavior
+
+The shared flow types already contained `ipProto`, `udpSrc`, `udpDst`, and the
+`METER` action, but the feature was incomplete end to end:
+
+- The Flow Rule Editor did not expose IP protocol or UDP destination port.
+- `buildOnosFlowBody()` did not serialize those match fields.
+- The editor did not offer a METER action.
+- No dashboard service could create a meter or recover the ID allocated by
+  ONOS.
+- Flow parsing did not retain IP protocol and METER instructions returned by
+  ONOS.
+
+Consequently, a student could generate UDP traffic on port 5201 but could not
+create the 50 Mbps policy described by Test 2 from the dashboard.
+
+### Meter creation and ID recovery
+
+`onosApi.ts` now exposes `getMetersForDevice()` and `addMeter()`. The latter
+validates the requested Mbps value and submits a `DROP` band to:
+
+```text
+POST /onos/v1/meters/{deviceId}
+```
+
+The request uses `KB_PER_SEC`, with the UI value converted from Mbps to
+kilobits per second. For example, 50 Mbps becomes a band rate of `50000`.
+
+ONOS versions differ in how they report a newly allocated meter ID. The client
+therefore accepts it from, in order:
+
+1. A `meterId` or `id` field in the response body.
+2. The numeric suffix of the HTTP `Location` header.
+3. A short read-back loop that compares the device's meter collection with the
+   IDs present before creation.
+
+If none of these mechanisms exposes the ID, the editor reports an explicit
+error instead of installing a flow with an undefined meter reference.
+
+### Flow editor behavior
+
+The editor now provides:
+
+- `IP Protocol`, where UDP is protocol `17`.
+- `UDP Dst Port`, used as `UDP_DST` in the ONOS selector.
+- `METER (rate limit)` as an action with a rate in Mbps.
+
+When the form is submitted, each new METER action is resolved first. The
+dashboard creates the meter on the selected switch, receives its ID, replaces
+the temporary rate value with that `meterId`, and then submits the flow. The
+flow should also retain an OUTPUT action so accepted traffic continues toward
+the next hop.
+
+`buildOnosFlowBody()` now emits `IP_PROTO`, `UDP_SRC`, `UDP_DST`, and `METER`
+objects. The inverse parsers retain the same criteria and meter ID when flows
+are refreshed from ONOS.
+
+### Test 2 configuration
+
+For a 200 Mbps UDP CBR test from H1 to H2 on destination port 5201:
+
+1. Use the switch directly connected to H1.
+2. Set the metered flow priority above the PathBuilder priority, for example
+   `55000`.
+3. Match Ethernet type `0x0800`, IP protocol `17`, and UDP destination port
+   `5201`.
+4. Add a METER action with rate `50` Mbps.
+5. Retain an OUTPUT action using the same next-hop port as the existing
+   H1-to-H2 PathBuilder rule.
+
+Expected OVS state:
+
+```text
+meter=1 kbps bands=type=drop rate=50000
+priority=55000,udp,tp_dst=5201 actions=meter:1,output:<next-hop-port>
+```
+
+The experiment can be checked with:
+
+```bash
+ovs-ofctl -O OpenFlow13 dump-meters <bridge>
+ovs-ofctl -O OpenFlow13 dump-flows <bridge> | grep 55000
+iperf3 -c 10.0.0.2 -u -p 5201 -b 200M -t 10
+```
+
+The expected received throughput is approximately 50 Mbps, subject to meter
+implementation, sampling interval, and normal UDP loss.
+
+### Validation and limitations
+
+The implementation was checked with:
+
+```bash
+cd sdn-dashboard
+npm run type-check
+npm run build
+```
+
+Both commands completed successfully. Hardware/Mininet verification remains
+necessary because the controller was not reachable from the development
+environment during implementation. Meter creation is intentionally performed
+before flow creation; if the subsequent flow request fails, the created meter
+remains on the switch and must be removed separately.
+
+### Why it matters
+
+This completes a policy-to-data-plane loop: the dashboard defines a bandwidth
+policy, ONOS allocates a meter, the flow selector identifies UDP traffic by L4
+port, and OVS enforces the rate before forwarding. The iperf3 result then
+provides observable evidence that the SDN policy changed real traffic behavior.
+
+---
+
+## 12. Future updates
 
 For each subsequent change, add a new numbered section containing:
 

@@ -184,6 +184,72 @@ export const deleteFlow = async (deviceId: string, flowId: string): Promise<void
   await api().delete(`/flows/${encodeURIComponent(deviceId)}/${encodeURIComponent(flowId)}`)
 }
 
+interface OnosMeter {
+  id?: number
+  meterId?: number
+  deviceId: string
+  state?: string
+  unit: string
+  bands: Array<{
+    type: string
+    rate: number
+    burstSize?: number
+  }>
+}
+
+export const getMetersForDevice = async (deviceId: string): Promise<OnosMeter[]> => {
+  const { data } = await api().get<{ meters: OnosMeter[] }>(
+    `/meters/${encodeURIComponent(deviceId)}`,
+  )
+  return data.meters ?? []
+}
+
+/** Create a drop-band meter. ONOS expresses KB_PER_SEC rates in kilobits/s. */
+export const addMeter = async (deviceId: string, rateMbps: number): Promise<number> => {
+  if (!Number.isFinite(rateMbps) || rateMbps <= 0) {
+    throw new Error('Meter rate must be greater than 0 Mbps')
+  }
+
+  const existing = await getMetersForDevice(deviceId)
+  const existingIds = new Set(
+    existing.map(meter => meter.meterId ?? meter.id).filter((id): id is number => id !== undefined),
+  )
+  const response = await api().post<OnosMeter>(
+    `/meters/${encodeURIComponent(deviceId)}`,
+    {
+      deviceId,
+      unit: 'KB_PER_SEC',
+      isBurst: false,
+      bands: [{
+        type: 'DROP',
+        rate: Math.round(rateMbps * 1000),
+        burstSize: 0,
+      }],
+    },
+  )
+
+  const responseId = response.data?.meterId ?? response.data?.id
+  if (responseId !== undefined) return Number(responseId)
+
+  const locationId = response.headers.location?.match(/\/meters\/[^/]+\/(\d+)\/?$/)?.[1]
+  if (locationId) return Number(locationId)
+
+  // Some ONOS versions return 201 without a response body. Read the device
+  // meters back and identify the ID allocated by the controller.
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await new Promise(resolve => window.setTimeout(resolve, 250))
+    const meters = await getMetersForDevice(deviceId)
+    const created = meters.find(meter => {
+      const id = meter.meterId ?? meter.id
+      return id !== undefined && !existingIds.has(id)
+    })
+    const createdId = created?.meterId ?? created?.id
+    if (createdId !== undefined) return Number(createdId)
+  }
+
+  throw new Error('ONOS created the meter but did not return its meter ID')
+}
+
 // ── Statistics ────────────────────────────────────────────────────────────────
 
 export const getFlowStats = async (): Promise<OnosStatEntry[]> => {
@@ -233,6 +299,9 @@ const buildOnosFlowBody = (
   if (match.vlanId !== undefined) criteria.push({ type: 'VLAN_VID', vlanId: match.vlanId })
   if (match.tcpSrc !== undefined) criteria.push({ type: 'TCP_SRC', tcpPort: match.tcpSrc })
   if (match.tcpDst !== undefined) criteria.push({ type: 'TCP_DST', tcpPort: match.tcpDst })
+  if (match.ipProto !== undefined) criteria.push({ type: 'IP_PROTO', protocol: match.ipProto })
+  if (match.udpSrc !== undefined) criteria.push({ type: 'UDP_SRC', udpPort: match.udpSrc })
+  if (match.udpDst !== undefined) criteria.push({ type: 'UDP_DST', udpPort: match.udpDst })
 
   const instructions: unknown[] = actions.map((a) => {
     switch (a.type) {
@@ -241,6 +310,7 @@ const buildOnosFlowBody = (
       case 'SET_VLAN_ID': return { type: 'L2MODIFICATION', subtype: 'VLAN_ID', vlanId: a.vlanId }
       case 'SET_ETH_SRC': return { type: 'L2MODIFICATION', subtype: 'ETH_SRC', mac: a.macAddress }
       case 'SET_ETH_DST': return { type: 'L2MODIFICATION', subtype: 'ETH_DST', mac: a.macAddress }
+      case 'METER': return { type: 'METER', meterId: a.meterId }
       default: return { type: a.type }
     }
   })
@@ -290,6 +360,7 @@ const parseCriteria = (criteria: Array<{ type: string; [k: string]: unknown }>):
       case 'VLAN_VID': match.vlanId = c.vlanId as number; break
       case 'TCP_SRC':  match.tcpSrc = c.tcpPort as number; break
       case 'TCP_DST':  match.tcpDst = c.tcpPort as number; break
+      case 'IP_PROTO': match.ipProto = c.protocol as number; break
       case 'UDP_SRC':  match.udpSrc = c.udpPort as number; break
       case 'UDP_DST':  match.udpDst = c.udpPort as number; break
     }
@@ -303,6 +374,7 @@ const parseInstructions = (
   instructions.map((i) => {
     if (i.type === 'OUTPUT') return { type: 'OUTPUT', port: i.port as number }
     if (i.type === 'DROP')   return { type: 'DROP' }
+    if (i.type === 'METER')  return { type: 'METER', meterId: Number(i.meterId) }
     if (i.type === 'L2MODIFICATION') {
       if (i.subtype === 'VLAN_ID')  return { type: 'SET_VLAN_ID', vlanId: i.vlanId as number }
       if (i.subtype === 'ETH_SRC')  return { type: 'SET_ETH_SRC', macAddress: i.mac as string }

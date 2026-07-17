@@ -94,7 +94,7 @@ export const PathBuilder = ({ srcId, dstId, onReset, onCancel, selectedSliceId }
     setDeploymentError(null)
     setDeployedRuleCount(null)
 
-    const priority = slice?.priority ?? 40000
+    const priority = slice?.priority ?? 50000
     const newFlowIds: string[] = []
     const routes = [
       { route: path, source: src, destination: dst },

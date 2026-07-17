@@ -124,6 +124,8 @@ export interface FlowAction {
   macAddress?: string
   ipAddress?: string
   meterId?: number
+  /** Used by the editor to create an ONOS meter before installing the flow. */
+  rateMbps?: number
   groupId?: number
 }
 

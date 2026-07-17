@@ -14,7 +14,7 @@ import { useState, type FormEvent } from 'react'
 import { Plus, Trash2, Save, X } from 'lucide-react'
 import { useNetworkStore } from '@/stores/networkStore'
 import { useFlowStore } from '@/stores/flowStore'
-import { addFlow } from '@/services/onosApi'
+import { addFlow, addMeter } from '@/services/onosApi'
 import type { FlowMatch, FlowAction, FlowRule } from '@/types'
 import { clsx } from 'clsx'
 
@@ -78,6 +78,7 @@ const ACTION_TYPES = [
   { value: 'SET_VLAN_ID', label: 'SET_VLAN_ID' },
   { value: 'SET_ETH_SRC', label: 'SET_ETH_SRC' },
   { value: 'SET_ETH_DST', label: 'SET_ETH_DST' },
+  { value: 'METER',       label: 'METER (rate limit)' },
 ]
 
 const ActionRow = ({
@@ -131,6 +132,18 @@ const ActionRow = ({
             value={action.macAddress ?? ''}
             onChange={(v) => onChange({ ...action, macAddress: v })}
             placeholder="aa:bb:cc:dd:ee:ff"
+          />
+        </div>
+      )}
+
+      {action.type === 'METER' && (
+        <div>
+          <Label>Rate (Mbps)</Label>
+          <Input
+            type="number"
+            value={action.rateMbps ?? ''}
+            onChange={(v) => onChange({ ...action, rateMbps: Number(v) || 0 })}
+            placeholder="50"
           />
         </div>
       )}
@@ -190,11 +203,18 @@ export const FlowRuleEditor = ({ initialFlow, onClose, onSaved }: FlowRuleEditor
     setError(null)
 
     try {
+      const resolvedActions = await Promise.all(actions.map(async (action) => {
+        if (action.type !== 'METER') return action
+        if (action.meterId !== undefined) return action
+        const meterId = await addMeter(deviceId, action.rateMbps ?? 0)
+        return { ...action, meterId }
+      }))
+
       const result = await addFlow(
         deviceId,
         parseInt(priority) || 40000,
         match,
-        actions,
+        resolvedActions,
         isPermanent,
         parseInt(timeout) || 0,
       )
@@ -208,7 +228,7 @@ export const FlowRuleEditor = ({ initialFlow, onClose, onSaved }: FlowRuleEditor
         isPermanent,
         state: 'PENDING_ADD',
         match,
-        actions,
+        actions: resolvedActions,
         bytes: 0,
         packets: 0,
         createdAt: new Date().toISOString(),
@@ -357,6 +377,24 @@ export const FlowRuleEditor = ({ initialFlow, onClose, onSaved }: FlowRuleEditor
                 value={match.tcpDst ?? ''}
                 onChange={(v) => updateMatch({ tcpDst: v ? parseInt(v) : undefined })}
                 placeholder="any"
+              />
+            </div>
+            <div>
+              <Label>IP Protocol</Label>
+              <Input
+                type="number"
+                value={match.ipProto ?? ''}
+                onChange={(v) => updateMatch({ ipProto: v ? parseInt(v) : undefined })}
+                placeholder="17 (UDP)"
+              />
+            </div>
+            <div>
+              <Label>UDP Dst Port</Label>
+              <Input
+                type="number"
+                value={match.udpDst ?? ''}
+                onChange={(v) => updateMatch({ udpDst: v ? parseInt(v) : undefined })}
+                placeholder="5201"
               />
             </div>
             <div>
