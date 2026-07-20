@@ -13,10 +13,12 @@ import {
 } from 'lucide-react'
 
 import { checkAgentHealth } from '@/services/rpiAgent'
+import { NetworkTopologyGraph } from '@/components/topology/NetworkTopologyGraph'
+import { useFlowStore } from '@/stores/flowStore'
 import { useNetworkStore } from '@/stores/networkStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useTrafficStore } from '@/stores/trafficStore'
-import type { TrafficParams, TrafficType } from '@/types'
+import type { Device, FlowRule, Link, TrafficParams, TrafficType } from '@/types'
 
 const inputClass =
   'w-full rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-slate-200 outline-none focus:border-sdn-500 disabled:opacity-40'
@@ -24,8 +26,124 @@ const inputClass =
 const resultValue = (value: number | null | undefined, unit: string) =>
   value === undefined || value === null ? '—' : `${value} ${unit}`
 
+interface DisplayPath {
+  deviceIds: string[]
+  linkIds: string[]
+}
+
+const shortestPath = (
+  devices: Device[],
+  links: Link[],
+  sourceId: string,
+  destinationId: string,
+): DisplayPath => {
+  const deviceById = new Map(devices.map(device => [device.id, device]))
+  const queue: DisplayPath[] = [{ deviceIds: [sourceId], linkIds: [] }]
+  const visited = new Set([sourceId])
+
+  while (queue.length) {
+    const candidate = queue.shift()!
+    const currentId = candidate.deviceIds[candidate.deviceIds.length - 1]
+    if (currentId === destinationId) return candidate
+
+    links.forEach(link => {
+      if (!link.isUp) return
+      const nextId = link.sourceDeviceId === currentId
+        ? link.targetDeviceId
+        : link.targetDeviceId === currentId
+        ? link.sourceDeviceId
+        : null
+      if (!nextId || visited.has(nextId) || deviceById.get(nextId)?.type === 'controller') return
+      visited.add(nextId)
+      queue.push({
+        deviceIds: [...candidate.deviceIds, nextId],
+        linkIds: [...candidate.linkIds, link.id],
+      })
+    })
+  }
+
+  return { deviceIds: [], linkIds: [] }
+}
+
+const flowMatchesTraffic = (
+  flow: FlowRule,
+  source: Device,
+  destination: Device,
+  params: TrafficParams,
+): boolean => {
+  const protocol = params.type === 'ping' ? 1 : params.type === 'tcp' ? 6 : 17
+  const withoutPrefix = (value?: string) => value?.split('/')[0]
+  const ethType = flow.match.ethType ? Number(flow.match.ethType) : undefined
+
+  return flow.state !== 'FAILED' && flow.state !== 'REMOVED' &&
+    (ethType === undefined || ethType === 0x0800) &&
+    (!flow.match.ethSrc || flow.match.ethSrc.toLowerCase() === source.macAddress?.toLowerCase()) &&
+    (!flow.match.ethDst || flow.match.ethDst.toLowerCase() === destination.macAddress?.toLowerCase()) &&
+    (!flow.match.ipSrc || withoutPrefix(flow.match.ipSrc) === source.ipAddress) &&
+    (!flow.match.ipDst || withoutPrefix(flow.match.ipDst) === destination.ipAddress) &&
+    (flow.match.ipProto === undefined || flow.match.ipProto === protocol) &&
+    (flow.match.udpDst === undefined || (params.type === 'udp' && flow.match.udpDst === params.dst_port)) &&
+    (flow.match.tcpDst === undefined || (params.type === 'tcp' && flow.match.tcpDst === params.dst_port))
+}
+
+const pathFromFlows = (
+  devices: Device[],
+  links: Link[],
+  flows: FlowRule[],
+  sourceId: string,
+  destinationId: string,
+  params: TrafficParams,
+): DisplayPath => {
+  const source = devices.find(device => device.id === sourceId)
+  const destination = devices.find(device => device.id === destinationId)
+  if (!source || !destination) return { deviceIds: [], linkIds: [] }
+
+  const result: DisplayPath = { deviceIds: [sourceId], linkIds: [] }
+  const visited = new Set([sourceId])
+  let currentId = sourceId
+
+  for (let hop = 0; hop < devices.length; hop += 1) {
+    if (currentId === destinationId) return result
+    const current = devices.find(device => device.id === currentId)
+    let nextLink: Link | undefined
+
+    if (current?.type === 'host') {
+      nextLink = links.find(link => link.isUp && (
+        link.sourceDeviceId === currentId || link.targetDeviceId === currentId
+      ))
+    } else if (current?.type === 'switch') {
+      const forwardingFlow = flows
+        .filter(flow => flow.deviceId === currentId && flowMatchesTraffic(flow, source, destination, params))
+        .sort((left, right) => right.priority - left.priority)
+        .find(flow => flow.actions.some(action => action.type === 'OUTPUT' && action.port !== undefined))
+      const outputPort = forwardingFlow?.actions.find(action => action.type === 'OUTPUT')?.port
+      nextLink = links.find(link => link.isUp && (
+        (link.sourceDeviceId === currentId && link.sourcePort === outputPort) ||
+        (link.targetDeviceId === currentId && link.targetPort === outputPort)
+      ))
+    }
+
+    if (!nextLink) return { deviceIds: [], linkIds: [] }
+    const nextId = nextLink.sourceDeviceId === currentId
+      ? nextLink.targetDeviceId
+      : nextLink.sourceDeviceId
+    if (visited.has(nextId) || devices.find(device => device.id === nextId)?.type === 'controller') {
+      return { deviceIds: [], linkIds: [] }
+    }
+
+    visited.add(nextId)
+    result.deviceIds.push(nextId)
+    result.linkIds.push(nextLink.id)
+    currentId = nextId
+  }
+
+  return { deviceIds: [], linkIds: [] }
+}
+
 export const TrafficGeneratorPanel = () => {
   const devices = useNetworkStore((state) => state.devices)
+  const links = useNetworkStore((state) => state.links)
+  const flows = useFlowStore((state) => state.flows)
   const rpiAgents = useSettingsStore((state) => state.rpiAgents)
 
   const status = useTrafficStore((state) => state.status)
@@ -63,6 +181,8 @@ export const TrafficGeneratorPanel = () => {
   const [streams, setStreams] = useState(1)
   const [agentTest, setAgentTest] = useState<string | null>(null)
   const [isTestingAgent, setIsTestingAgent] = useState(false)
+  const [localElapsed, setLocalElapsed] = useState(0)
+  const [packetStep, setPacketStep] = useState(0)
 
   const isBusy = ['starting', 'running', 'stopping'].includes(status)
   const isRunning = status === 'running'
@@ -88,14 +208,75 @@ export const TrafficGeneratorPanel = () => {
     return () => window.clearInterval(timer)
   }, [isRunning, refreshResult])
 
+  useEffect(() => {
+    if (!activeJob) {
+      setLocalElapsed(0)
+      return
+    }
+
+    const updateElapsed = () => {
+      setLocalElapsed(Math.max(0, (Date.now() - Date.parse(activeJob.startedAt)) / 1000))
+    }
+    updateElapsed()
+    const timer = window.setInterval(updateElapsed, 250)
+    return () => window.clearInterval(timer)
+  }, [activeJob])
+
   const source = destinationHosts.find((host) => host.id === sourceId)
   const destination = destinationHosts.find((host) => host.id === destinationId)
   const sourceAgentOverride = source ? rpiAgents[source.id]?.trim() : undefined
   const sourceAgentAddress = sourceAgentOverride || source?.ipAddress
 
-  const elapsed = latestResult?.elapsed_sec ?? 0
+  const elapsed = Math.max(latestResult?.elapsed_sec ?? 0, localElapsed)
   const runDuration = activeJob?.params.duration ?? durationSec
   const progress = runDuration > 0 ? Math.min(100, (elapsed / runDuration) * 100) : 0
+  const displayedPath = useMemo(() => {
+    if (!source || !destination) return { deviceIds: [], linkIds: [] }
+    const params = activeJob?.params ?? {
+      type: trafficType,
+      target: destination.ipAddress,
+      duration: durationSec,
+      dst_port: destinationPort,
+    }
+    const forwardingPath = pathFromFlows(
+      devices,
+      links,
+      flows,
+      source.id,
+      destination.id,
+      params,
+    )
+    return forwardingPath.linkIds.length
+      ? forwardingPath
+      : shortestPath(devices, links, source.id, destination.id)
+  }, [activeJob, destination, destinationPort, devices, durationSec, flows, links, source, trafficType])
+  const pathLinkKey = displayedPath.linkIds.join('|')
+  const packetSequence = activeJob && displayedPath.linkIds.length
+    ? [...displayedPath.linkIds, ...[...displayedPath.linkIds].reverse()]
+    : []
+  const activePacketLinkId = packetSequence[packetStep % Math.max(packetSequence.length, 1)] ?? null
+  const forwardHopCount = displayedPath.linkIds.length
+  const activePacketNodeId = activeJob && displayedPath.deviceIds.length
+    ? packetStep < forwardHopCount
+      ? displayedPath.deviceIds[Math.min(packetStep, displayedPath.deviceIds.length - 1)]
+      : displayedPath.deviceIds[Math.max(0, displayedPath.deviceIds.length - 1 - (packetStep - forwardHopCount))]
+    : null
+  const packetDirection = packetStep < forwardHopCount ? 'outbound' : 'returning'
+  const activeLinkUtilization = activePacketLinkId
+    ? links.find(link => link.id === activePacketLinkId)?.utilizationPct ?? 0
+    : 0
+
+  useEffect(() => {
+    setPacketStep(0)
+    if (!activeJob || !pathLinkKey) return
+
+    const sequenceLength = displayedPath.linkIds.length * 2
+    const timer = window.setInterval(
+      () => setPacketStep(current => (current + 1) % sequenceLength),
+      450,
+    )
+    return () => window.clearInterval(timer)
+  }, [activeJob?.id, pathLinkKey]) // eslint-disable-line react-hooks/exhaustive-deps
   const feedbackIsError = Boolean(
     error || (agentTest && !agentTest.startsWith('Agent reachable')),
   )
@@ -374,6 +555,30 @@ export const TrafficGeneratorPanel = () => {
           </button>
         )}
       </div>
+
+      {source && destination && (
+        <div className="mt-5 border-t border-slate-700/50 pt-4">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-slate-300">Traffic path</p>
+              <p className="text-xs text-slate-500">
+                {activeJob
+                  ? `Packet ${packetDirection} · current link ${activeLinkUtilization.toFixed(1)}% utilized`
+                  : 'Start a test to animate packet movement link by link'}
+              </p>
+            </div>
+            <span className="text-xs font-mono text-sdn-400">
+              {source.label} → {destination.label}
+            </span>
+          </div>
+          <div className="relative h-80 overflow-hidden rounded-lg border border-slate-700/50 bg-slate-950/40">
+            <NetworkTopologyGraph
+              activePacketLinkId={activePacketLinkId}
+              activePacketNodeId={activePacketNodeId}
+            />
+          </div>
+        </div>
+      )}
 
       {history.length > 0 && (
         <div className="mt-5 border-t border-slate-700/50 pt-4">

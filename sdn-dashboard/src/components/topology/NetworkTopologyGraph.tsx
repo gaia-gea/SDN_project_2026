@@ -247,6 +247,11 @@ interface NetworkTopologyGraphProps {
   highlightLinkIds?: string[]
   /** Accent color hex used for highlighted nodes/edges (e.g., chain color) */
   highlightColor?: string
+  /** Keep highlighted edges color-coded by their live utilization. */
+  colorHighlightedLinksByUtilization?: boolean
+  /** Single link/node occupied by the packet animation at this instant. */
+  activePacketLinkId?: string | null
+  activePacketNodeId?: string | null
   pathBuilderMode?: boolean
   onPathNodeClick?: (id: string, deviceType: string) => void
   /** Packet Tracer animation — drives step-by-step path animation */
@@ -266,6 +271,9 @@ export const NetworkTopologyGraph = forwardRef<NetworkTopologyGraphHandle, Netwo
     highlightDeviceIds,
     highlightLinkIds,
     highlightColor = '#38bdf8',
+    colorHighlightedLinksByUtilization = false,
+    activePacketLinkId,
+    activePacketNodeId,
     pathBuilderMode,
     onPathNodeClick,
     traceConfig,
@@ -501,18 +509,28 @@ export const NetworkTopologyGraph = forwardRef<NetworkTopologyGraphHandle, Netwo
   useEffect(() => {
     const cy = cyRef.current
     if (!cy) return
+    const hasLinkHighlight = Boolean(highlightLinkIds?.length)
     links.forEach((link) => {
       const edge = cy.getElementById(link.id)
       if (edge.length) {
+        const isHighlighted = Boolean(highlightLinkIds?.includes(link.id))
         edge.style({
-          'line-color': link.isUp ? utilizationColor(link.utilizationPct) : '#475569',
-          'width': Math.max(1, Math.min(8, 1 + (link.utilizationPct / 100) * 7)),
+          'line-color': isHighlighted && !colorHighlightedLinksByUtilization
+            ? highlightColor
+            : link.isUp
+            ? utilizationColor(link.utilizationPct)
+            : '#475569',
+          'width': isHighlighted
+            ? 5
+            : Math.max(1, Math.min(8, 1 + (link.utilizationPct / 100) * 7)),
           'line-style': link.isUp ? 'solid' : 'dashed',
-          'opacity': link.isUp ? 0.85 : 0.35,
+          'opacity': hasLinkHighlight
+            ? isHighlighted ? 1 : 0.08
+            : link.isUp ? 0.85 : 0.35,
         })
       }
     })
-  }, [links])
+  }, [colorHighlightedLinksByUtilization, highlightColor, highlightLinkIds, links])
 
   // ── Highlight nodes + links for selected flow / slice / SFC chain ──────────
   useEffect(() => {
@@ -541,13 +559,58 @@ export const NetworkTopologyGraph = forwardRef<NetworkTopologyGraphHandle, Netwo
     // Edges
     cy.edges().forEach((edge) => {
       const isHL = hasLinkHL && highlightLinkIds!.includes(edge.id())
+      const link = links.find(item => item.id === edge.id()) ?? edge.data('link') as Link
       edge.style({
         'opacity': isHL ? 1 : 0.08,
-        'line-color': isHL ? highlightColor : '#475569',
+        'line-color': isHL
+          ? colorHighlightedLinksByUtilization
+            ? utilizationColor(link.utilizationPct)
+            : highlightColor
+          : '#475569',
         'width': isHL ? 5 : 1,
       })
     })
-  }, [highlightDeviceIds, highlightLinkIds, highlightColor])
+  }, [colorHighlightedLinksByUtilization, highlightDeviceIds, highlightLinkIds, highlightColor, links])
+
+  // ── Live single-packet position (used by Traffic Generator) ───────────────
+  useEffect(() => {
+    const cy = cyRef.current
+    if (!cy) return
+
+    if (!activePacketLinkId && !activePacketNodeId) {
+      cy.nodes().style({ opacity: 1, 'border-width': 2, 'border-color': '#1e293b' })
+      cy.nodes('.controller').style({ 'border-color': '#7c3aed', 'border-width': 3 })
+      cy.edges().forEach(edge => {
+        const link = links.find(item => item.id === edge.id()) ?? edge.data('link') as Link
+        edge.style({
+          opacity: link.isUp ? 0.85 : 0.35,
+          'line-color': link.isUp ? utilizationColor(link.utilizationPct) : '#475569',
+          width: Math.max(1, Math.min(8, 1 + (link.utilizationPct / 100) * 7)),
+        })
+      })
+      return
+    }
+
+    cy.nodes().style({ opacity: 0.22, 'border-width': 2, 'border-color': '#1e293b' })
+    cy.edges().style({ opacity: 0.08, 'line-color': '#475569', width: 1 })
+
+    if (activePacketNodeId) {
+      cy.getElementById(activePacketNodeId).style({
+        opacity: 1,
+        'border-width': 5,
+        'border-color': '#facc15',
+      })
+    }
+
+    if (activePacketLinkId) {
+      const link = links.find(item => item.id === activePacketLinkId)
+      cy.getElementById(activePacketLinkId).style({
+        opacity: 1,
+        'line-color': link ? utilizationColor(link.utilizationPct) : '#facc15',
+        width: 7,
+      })
+    }
+  }, [activePacketLinkId, activePacketNodeId, links])
 
   // ── Cytoscape event wiring ──────────────────────────────────────────────────
   const handleCyReady = useCallback((cy: Cytoscape.Core) => {

@@ -26,6 +26,7 @@ export const FlowsPage = () => {
   const [pathBuilderMode, setPathBuilderMode] = useState(false)
   const [pathSrc, setPathSrc] = useState<string | null>(null)
   const [pathDst, setPathDst] = useState<string | null>(null)
+  const [pathVia, setPathVia] = useState<string[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null)
 
@@ -36,7 +37,7 @@ export const FlowsPage = () => {
   // - If a flow is selected: highlight the device the flow is on
   // - If a slice is selected: highlight all devices referenced by slice's flows
   const highlightDeviceIds: string[] = (() => {
-    if (pathBuilderMode) return [pathSrc, pathDst].filter(Boolean) as string[]
+    if (pathBuilderMode) return [pathSrc, ...pathVia, pathDst].filter(Boolean) as string[]
     if (selectedDeviceId) return [selectedDeviceId]
     if (selectedFlowId) {
       const flow = flows.find(f => f.id === selectedFlowId)
@@ -67,12 +68,26 @@ export const FlowsPage = () => {
     }
   }
 
-  const handlePathNodeClick = useCallback((id: string, _deviceType: string) => {
+  const handlePathNodeClick = useCallback((id: string, deviceType: string) => {
     if (!pathBuilderMode) return
-    if (!pathSrc) { setPathSrc(id); return }
-    if (id === pathSrc) return
-    setPathDst(id)
-  }, [pathBuilderMode, pathSrc])
+
+    if (deviceType === 'host') {
+      setPathSrc(currentSrc => {
+        if (!currentSrc) return id
+        if (id !== currentSrc) setPathDst(id)
+        return currentSrc
+      })
+      return
+    }
+
+    if (deviceType === 'switch' && pathSrc && !pathDst) {
+      setPathVia(current =>
+        current.includes(id)
+          ? current.filter(switchId => switchId !== id)
+          : [...current, id],
+      )
+    }
+  }, [pathBuilderMode, pathSrc, pathDst])
 
   const handleTopologySelect = useCallback((element: SelectedElement) => {
     if (pathBuilderMode) return
@@ -139,7 +154,11 @@ export const FlowsPage = () => {
             )}
             {pathBuilderMode && (
               <span className="text-xs text-sdn-400 animate-pulse">
-                {!pathSrc ? 'Click source node…' : !pathDst ? 'Click destination node…' : 'Path selected'}
+                {!pathSrc
+                  ? 'Click source host…'
+                  : !pathDst
+                  ? 'Optional: click switches, then destination host…'
+                  : 'Path selected'}
               </span>
             )}
             <div className="ml-auto flex gap-2">
@@ -148,6 +167,7 @@ export const FlowsPage = () => {
                   setPathBuilderMode(v => !v)
                   setPathSrc(null)
                   setPathDst(null)
+                  setPathVia([])
                 }}
                 className={clsx(
                   'flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-all',
@@ -178,8 +198,9 @@ export const FlowsPage = () => {
               <PathBuilder
                 srcId={pathSrc}
                 dstId={pathDst}
-                onReset={() => { setPathSrc(null); setPathDst(null) }}
-                onCancel={() => { setPathBuilderMode(false); setPathSrc(null); setPathDst(null) }}
+                viaIds={pathVia}
+                onReset={() => { setPathSrc(null); setPathDst(null); setPathVia([]) }}
+                onCancel={() => { setPathBuilderMode(false); setPathSrc(null); setPathDst(null); setPathVia([]) }}
                 selectedSliceId={selectedSliceId}
               />
             </div>

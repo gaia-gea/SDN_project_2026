@@ -699,7 +699,122 @@ provides observable evidence that the SDN policy changed real traffic behavior.
 
 ---
 
-## 12. Future updates
+## 12. PathBuilder waypoint routing
+
+### Objective
+
+Extend PathBuilder beyond automatic shortest-path routing so Extension B, Test
+3 can steer traffic through a user-selected sequence of intermediate switches.
+
+### Files involved
+
+- `sdn-dashboard/src/pages/FlowsPage.tsx`
+- `sdn-dashboard/src/components/flows/PathBuilder.tsx`
+
+### Selection and routing behavior
+
+Path-building clicks now have an explicit order:
+
+1. Click a host to select the source.
+2. Optionally click one or more switches to add ordered waypoints. Clicking an
+   already selected waypoint removes it.
+3. Click a different host to select the destination.
+
+`FlowsPage` stores the waypoint IDs separately from the endpoints and includes
+all selected nodes in topology highlighting. Reset, cancel, and mode toggling
+clear the complete selection.
+
+PathBuilder calculates a shortest active segment between each consecutive pair
+in `[source, ...waypoints, destination]` and concatenates the segments. The
+controller remains excluded from the data-plane adjacency graph. A constrained
+route containing a repeated node is rejected because installing different
+output decisions for the same host pair on the same switch would create an
+ambiguous forwarding loop.
+
+The final constrained route is displayed in the panel and is reversed exactly
+for return traffic. IPv4 and ARP rules are therefore installed in both
+directions through the same selected switches. PathBuilder exposes a numeric
+flow-priority field initialized from the active slice or `50000`. The accepted
+range is `40001` through `65535`, ensuring its ARP rules take precedence over
+the general priority-`40000` controller rule. A newer route for the same host
+pair can use a higher priority than the old route; OpenFlow then selects the
+new route at their shared ingress switch without relying on equal-priority
+overlap behavior.
+
+### Test 3 usage
+
+For a topology where the default H1-to-H3 route uses S1-to-S2, an alternative
+route can be selected as:
+
+```text
+H1 -> S3 waypoint -> H3
+```
+
+The segment calculation expands this into the actual connected route, for
+example:
+
+```text
+H1 -> S1 -> S3 -> S2 -> H3
+```
+
+After deployment, `iperf3` TCP Bulk traffic can be compared before and after
+the steering rule using OVS flow counters on the original and alternative
+transit links.
+
+### Validation
+
+The extension passed `npm run type-check`, `npm run build`, and
+`git diff --check`. Real path-steering verification still requires deploying
+the rules to ONOS and comparing OVS counters during a TCP Bulk run.
+
+---
+
+## 13. Live traffic path in Experiments
+
+### Objective
+
+Show the data-plane path below Traffic Generator while ping, TCP, or UDP tests
+are running, and make the time progress bar advance independently of agent
+polling latency.
+
+### Files involved
+
+- `sdn-dashboard/src/components/experiments/TrafficGeneratorPanel.tsx`
+- `sdn-dashboard/src/components/topology/NetworkTopologyGraph.tsx`
+- `sdn-dashboard/src/hooks/useOnosPolling.ts`
+
+### Implementation
+
+The Experiments panel reuses `NetworkTopologyGraph`. During an active job it
+traces the highest-priority matching IPv4 rules and follows their OUTPUT ports
+from source to destination. If the rule set is not yet available, it falls
+back to the shortest active topology path. A 450 ms animation then illuminates
+one link at a time from source to destination and back to the source. This
+represents ping request/reply movement and TCP data/acknowledgement directions;
+unrelated nodes and links are dimmed at each instant.
+
+Port polling now calculates instantaneous throughput from byte-counter deltas
+and elapsed poll time, then updates each `networkStore` link's throughput and
+utilization. The link currently occupied by the animation is widened and keeps
+its own utilization color (green, amber, or red); the rest of the route is not
+simultaneously illuminated. This allows a metered path to show different load
+before and after the meter rather than assigning one misleading color to the
+entire route.
+
+The progress bar uses a 250 ms local timer derived from the active job's
+`startedAt` timestamp and reconciles it with `elapsed_sec` returned by the
+agent. It therefore advances smoothly even though `/result` is polled every
+two seconds.
+
+### Validation
+
+The changes passed `npm run type-check`, `npm run build`, and
+`git diff --check`. Real-mode validation should run ping, UDP CBR with and
+without a meter, and TCP Bulk across two alternative PathBuilder routes.
+
+---
+
+## 14. Future updates
 
 For each subsequent change, add a new numbered section containing:
 

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AlertTriangle, ArrowRight, CheckCircle2, Loader2, X, Zap, RotateCcw } from 'lucide-react'
 import { useNetworkStore } from '@/stores/networkStore'
 import { useFlowStore } from '@/stores/flowStore'
@@ -11,12 +11,13 @@ import { addFlow as pushFlowToOnos } from '@/services/onosApi'
 interface PathBuilderProps {
   srcId: string | null
   dstId: string | null
+  viaIds: string[]
   onReset: () => void
   onCancel: () => void
   selectedSliceId: string | null
 }
 
-export const PathBuilder = ({ srcId, dstId, onReset, onCancel, selectedSliceId }: PathBuilderProps) => {
+export const PathBuilder = ({ srcId, dstId, viaIds, onReset, onCancel, selectedSliceId }: PathBuilderProps) => {
   const devices = useNetworkStore(s => s.devices)
   const links = useNetworkStore(s => s.links)
   const { addFlow } = useFlowStore()
@@ -24,10 +25,19 @@ export const PathBuilder = ({ srcId, dstId, onReset, onCancel, selectedSliceId }
   const [isDeploying, setIsDeploying] = useState(false)
   const [deploymentError, setDeploymentError] = useState<string | null>(null)
   const [deployedRuleCount, setDeployedRuleCount] = useState<number | null>(null)
+  const [priorityInput, setPriorityInput] = useState('50000')
 
   const src = devices.find(d => d.id === srcId)
   const dst = devices.find(d => d.id === dstId)
   const slice = slices.find(s => s.id === selectedSliceId)
+
+  useEffect(() => {
+    setPriorityInput(String(Math.max(slice?.priority ?? 50000, 50000)))
+  }, [selectedSliceId, slice?.priority])
+
+  const requestedPriority = Number(priorityInput)
+  const isPriorityValid = Number.isInteger(requestedPriority) &&
+    requestedPriority > 40000 && requestedPriority <= 65535
 
   // Find a path between src and dst through all devices (BFS)
   const findPath = (srcId: string, dstId: string): string[] => {
@@ -59,7 +69,25 @@ export const PathBuilder = ({ srcId, dstId, onReset, onCancel, selectedSliceId }
     return []
   }
 
-  const path = srcId && dstId ? findPath(srcId, dstId) : []
+  const buildConstrainedPath = (stops: string[]): string[] => {
+    const constrainedPath: string[] = []
+
+    for (let index = 0; index < stops.length - 1; index += 1) {
+      const segment = findPath(stops[index], stops[index + 1])
+      if (segment.length < 2) return []
+      constrainedPath.push(...(index === 0 ? segment : segment.slice(1)))
+    }
+
+    // Repeated nodes would create a forwarding loop. Reject that selection
+    // instead of installing ambiguous rules on the same switch.
+    return new Set(constrainedPath).size === constrainedPath.length
+      ? constrainedPath
+      : []
+  }
+
+  const path = srcId && dstId
+    ? buildConstrainedPath([srcId, ...viaIds, dstId])
+    : []
 
   const switchesOnPath = path.filter(id => devices.find(d => d.id === id)?.type === 'switch')
 
@@ -81,6 +109,10 @@ export const PathBuilder = ({ srcId, dstId, onReset, onCancel, selectedSliceId }
 
   const deployFlow = async () => {
     if (!srcId || !dstId || path.length < 2 || isDeploying) return
+    if (!isPriorityValid) {
+      setDeploymentError('Priority must be an integer between 40001 and 65535.')
+      return
+    }
     if (src?.type !== 'host' || dst?.type !== 'host') {
       setDeploymentError('Source and destination must both be hosts.')
       return
@@ -94,7 +126,7 @@ export const PathBuilder = ({ srcId, dstId, onReset, onCancel, selectedSliceId }
     setDeploymentError(null)
     setDeployedRuleCount(null)
 
-    const priority = slice?.priority ?? 50000
+    const priority = requestedPriority
     const newFlowIds: string[] = []
     const routes = [
       { route: path, source: src, destination: dst },
@@ -219,14 +251,22 @@ export const PathBuilder = ({ srcId, dstId, onReset, onCancel, selectedSliceId }
 
       <p className="text-xs text-slate-400">
         {!srcId
-          ? '① Click a node on the topology as source'
+          ? '① Click a host as source'
           : !dstId
-          ? '② Click another node as destination'
-          : `Path found: ${path.length} hops · ${switchesOnPath.length} switch${switchesOnPath.length !== 1 ? 'es' : ''}`}
+          ? '② Optionally click switches as waypoints, then click the destination host'
+          : path.length > 1
+          ? `Path found: ${path.length - 1} hops · ${switchesOnPath.length} switch${switchesOnPath.length !== 1 ? 'es' : ''}`
+          : 'No loop-free active path satisfies the selected waypoints'}
       </p>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 overflow-x-auto pb-1">
         <NodeChip id={srcId} step="Select source…" />
+        {viaIds.map(id => (
+          <div key={id} className="flex items-center gap-2 flex-shrink-0">
+            <ArrowRight className="w-4 h-4 text-slate-500" />
+            <NodeChip id={id} step="Via switch…" />
+          </div>
+        ))}
         <ArrowRight className="w-4 h-4 text-slate-500 flex-shrink-0" />
         <NodeChip id={dstId} step="Select dest…" />
       </div>
@@ -265,6 +305,35 @@ export const PathBuilder = ({ srcId, dstId, onReset, onCancel, selectedSliceId }
         </div>
       )}
 
+      <div>
+        <label htmlFor="path-priority" className="mb-1 block text-xs font-medium text-slate-400">
+          Flow priority
+        </label>
+        <input
+          id="path-priority"
+          type="number"
+          min={40001}
+          max={65535}
+          step={1}
+          value={priorityInput}
+          onChange={(event) => {
+            setPriorityInput(event.target.value)
+            setDeploymentError(null)
+            setDeployedRuleCount(null)
+          }}
+          disabled={isDeploying}
+          className={clsx(
+            'w-full rounded-lg border bg-slate-800 px-3 py-2 font-mono text-sm text-slate-100 outline-none',
+            isPriorityValid
+              ? 'border-slate-700 focus:border-sdn-500'
+              : 'border-red-500/50 focus:border-red-400',
+          )}
+        />
+        <p className="mt-1 text-[10px] text-slate-500">
+          Use a higher value to replace an older path for the same host pair.
+        </p>
+      </div>
+
       <div className="flex gap-2">
         <button
           onClick={() => {
@@ -279,7 +348,7 @@ export const PathBuilder = ({ srcId, dstId, onReset, onCancel, selectedSliceId }
         </button>
         <button
           onClick={deployFlow}
-          disabled={!srcId || !dstId || path.length < 2 || isDeploying}
+          disabled={!srcId || !dstId || path.length < 2 || !isPriorityValid || isDeploying}
           className="flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded bg-sdn-600 hover:bg-sdn-500 text-sm text-white disabled:opacity-40 transition-colors"
         >
           {isDeploying

@@ -19,6 +19,7 @@ const METRICS_MS  = Number(import.meta.env.VITE_METRICS_POLL_MS ?? 2_000)
 
 export const useOnosPolling = () => {
   const setTopology = useNetworkStore((s) => s.setTopology)
+  const updateLink = useNetworkStore((s) => s.updateLink)
   const addAlert = useNetworkStore((s) => s.addAlert)
   const setWsState = useNetworkStore((s) => s.setWsConnectionState)
 
@@ -26,6 +27,7 @@ export const useOnosPolling = () => {
   const updateLinkMetrics = useMetricsStore((s) => s.updateLinkMetrics)
 
   const prevDeviceIds = useRef<Set<string>>(new Set())
+  const prevPortBytesRef = useRef<Map<string, { bytes: number; timestamp: number }>>(new Map())
 
   const topoTimer = useRef<ReturnType<typeof setInterval> | null>(null)
   const metricsTimer = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -121,10 +123,25 @@ export const useOnosPolling = () => {
 
 
         if (srcStats) {
-          const throughput =
-            (srcStats.txBytes * 8) /
-            1e6 /
-            (srcStats.durationSec || 1)
+          const key = `${link.sourceDeviceId}:${link.sourcePort}`
+          const totalBytes = srcStats.rxBytes + srcStats.txBytes
+          const previous = prevPortBytesRef.current.get(key)
+          const elapsedSeconds = previous ? Math.max((ts - previous.timestamp) / 1000, 0.001) : 0
+          const deltaBytes = previous ? Math.max(0, totalBytes - previous.bytes) : 0
+          const throughput = elapsedSeconds > 0
+            ? (deltaBytes * 8) / 1e6 / elapsedSeconds
+            : 0
+          const utilizationPct = link.capacityMbps > 0
+            ? Math.min(100, (throughput / link.capacityMbps) * 100)
+            : 0
+
+          prevPortBytesRef.current.set(key, { bytes: totalBytes, timestamp: ts })
+
+          updateLink({
+            ...link,
+            throughputMbps: throughput,
+            utilizationPct,
+          })
 
           updateLinkMetrics(
             link.id,
@@ -144,7 +161,7 @@ export const useOnosPolling = () => {
       console.warn('[OnosPolling] metrics fetch failed:', err)
     }
 
-  }, [updateLinkMetrics])
+  }, [updateLink, updateLinkMetrics])
 
 
   // ── Start / stop polling ────────────────────────────────────────────────
